@@ -3,7 +3,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 # The network address path to our PostgreSQL container running over Port 5432
-DATABASE_URL = "postgresql://admin:SecretPassword123@localhost:5432/billing_system"
+DATABASE_URL = "postgresql+psycopg://admin:SecretPassword123@localhost:5432/billing_system"
 
 # Create the core database connectivity engine
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)

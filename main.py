@@ -1,13 +1,13 @@
 from fastapi import FastAPI
+from router import router as tenant_router
 
-# Initialize the core FastAPI engine application
 app = FastAPI(title="Multi-Tenant Billing REST API")
+
+# Register the modular routing engine
+app.include_router(tenant_router)
 
 @app.get("/")
 def read_root():
-    """
-    A simple health-check endpoint to verify the API is online.
-    """
     return {
         "status": "online",
         "message": "Welcome to the Multi-Tenant Subscription Billing REST API"
