@@ -1,9 +1,13 @@
 from fastapi import FastAPI
 from router import router as tenant_router
+from middleware import TenantRoutingMiddleware
 
 app = FastAPI(title="Multi-Tenant Billing REST API")
 
-# Register the modular routing engine
+# Mount our custom dynamic data isolation tracking router middleware
+app.add_middleware(TenantRoutingMiddleware)
+
+# Register the modular routing controllers
 app.include_router(tenant_router)
 
 @app.get("/")
