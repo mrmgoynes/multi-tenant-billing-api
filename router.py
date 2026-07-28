@@ -13,10 +13,12 @@ def register_tenant(tenant_data: schemas.TenantCreate, db: Session = Depends(get
     Onboarding Endpoint: Validates the payload, ensures subdomain uniqueness, 
     records the master entity, and dynamically provisions an isolated database schema.
     """
-    # 1. Query the database to check if the requested subdomain already exists
+    # DEBUG STEP FOR SDET VALIDATION: Let's see what the database query returns
     existing_tenant = db.query(models.Tenant).filter(models.Tenant.subdomain == tenant_data.subdomain.lower()).first()
     
-    if existing_tenant:
+    print(f"\n[DEBUG LOG] Incoming Subdomain: '{tenant_data.subdomain}' | Found in DB: {existing_tenant}")
+    
+    if existing_tenant is not None: # Explicitly check for an active object
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"The subdomain '{tenant_data.subdomain}' is already taken. Please choose another."
@@ -40,7 +42,6 @@ def register_tenant(tenant_data: schemas.TenantCreate, db: Session = Depends(get
     try:
         create_tenant_infrastructure(db, safe_schema_name)
     except RuntimeError as error:
-        # If the infrastructure generation fails, drop the public record to maintain transactional consistency
         db.delete(new_tenant)
         db.commit()
         raise HTTPException(
