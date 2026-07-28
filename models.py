@@ -20,7 +20,7 @@ class Tenant(Base):
     status = Column(String(20), default="active")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    class Customer(Base):
+class Customer(Base):
     """
     Python mapping for the tenant-specific customers table.
     Housed dynamically inside individual client schema folders.

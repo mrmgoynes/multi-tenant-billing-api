@@ -26,9 +26,10 @@ class TenantResponse(BaseModel):
     status: str
 
     class Config:
-        from_attributes = True # Allows Pydantic to read raw SQLAlchemy database models
+        from_attributes = True
 
-        class CustomerCreate(BaseModel):
+
+class CustomerCreate(BaseModel):
     """
     Data validation schema for incoming customer creation requests.
     """
