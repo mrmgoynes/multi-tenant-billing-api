@@ -27,3 +27,32 @@ class TenantResponse(BaseModel):
 
     class Config:
         from_attributes = True # Allows Pydantic to read raw SQLAlchemy database models
+
+        class CustomerCreate(BaseModel):
+    """
+    Data validation schema for incoming customer creation requests.
+    """
+    first_name: str = Field(..., max_length=50, description="The customer's given name")
+    last_name: str = Field(..., max_length=50, description="The customer's family name")
+    email: str = Field(..., max_length=100, description="The customer's unique email address")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "first_name": "Jon",
+                "last_name": "Snow",
+                "email": "jon.snow@wall.com"
+            }
+        }
+
+class CustomerResponse(BaseModel):
+    """
+    Data validation schema for outgoing customer API responses.
+    """
+    id: int
+    first_name: str
+    last_name: str
+    email: str
+
+    class Config:
+        from_attributes = True
