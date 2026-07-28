@@ -1,42 +1,49 @@
-import os
-from sqlalchemy import create_engine, event
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker, DeclarativeBase
 from tenant_context import get_tenant_schema
 
-# The network address path to our PostgreSQL container running over Port 5432
+# Explicitly use +psycopg to leverage your installed modern v3 driver
 DATABASE_URL = "postgresql+psycopg://admin:SecretPassword123@localhost:5432/billing_system"
 
-# Create the core database connectivity engine
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+# Establish high-performance enterprise connection pooling
+engine = create_engine(
+    DATABASE_URL, 
+    pool_size=10, 
+    max_overflow=20,
+    pool_pre_ping=True  # Automatically audits and revives dropped database connections
+)
 
-# Generate an isolated session class for executing queries
+# Core Session Factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# The base class that our python database models will inherit from
-Base = declarative_base()
-
-# --- ENTERPRISE MULTI-TENANT HOOK ---
-@event.listens_for(engine, "connect")
-def set_search_path(dbapi_connection, connection_record):
+# ==============================================================================
+# ARCHITECTURAL LINK: Declarative Mapping Foundation
+# This provides the shared metadata tracking hook required by your models.py file
+# ==============================================================================
+class Base(DeclarativeBase):
     """
-    Infrastructure Event Listener: The moment a database connection is pulled 
-    from the connection pool, this hook dynamically overrides PostgreSQL's 
-    search_path to force queries to execute within the active tenant's isolated schema folder.
+    Central Database Metadata Registry:
+    Tracks all declarative table structures across both central and tenant tables.
     """
-    cursor = dbapi_connection.cursor()
-    active_schema = get_tenant_schema()
-    
-    # Execute a native PostgreSQL configuration rule to lock the connection scope
-    cursor.execute(f"SET search_path TO {active_schema}, public;")
-    cursor.close()
+    pass
 
 def get_db():
     """
-    FastAPI Dependency: Yields a clean database session connection 
-    per request and ensures it safely closes when finished.
+    Dynamic Database Session Context Provider:
+    Spawns an isolated transaction session and forces its search path to the active tenant.
     """
     db = SessionLocal()
     try:
+        # 1. Fetch the thread-safe context value managed by your middleware
+        active_schema = get_tenant_schema()
+        
+        # 2. Instruct PostgreSQL to prioritize the active tenant's schema space
+        db.execute(text(f'SET search_path TO "{active_schema}", public;'))
+        db.commit()  # Seal the search path context inside this transaction thread
+        
         yield db
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()

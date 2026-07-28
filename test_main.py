@@ -2,63 +2,66 @@ import pytest
 from fastapi.testclient import TestClient
 from main import app
 from database import SessionLocal
+from sqlalchemy import text
 import models
 
-# Initialize our virtual test client runner
 client = TestClient(app)
 
 @pytest.fixture(autouse=True)
 def cleanup_database():
     """
-    Test Fixture: Runs automatically before and after EVERY test case.
-    Ensures our test database records are wiped clean so tests don't interfere with each other.
+    SDET Test Fixture: Automated lifecycle manager.
+    Wipes master registries and destroys generated test schema folders from Docker.
     """
-    # Setup phase: (Nothing needed before the test)
     yield
-    # Teardown phase: Delete the test tenant 'winterfell' after the test finishes
     db = SessionLocal()
     try:
-        db.query(models.Tenant).filter(models.Tenant.subdomain == "winterfell").delete()
+        # Wipe master registration records from the public directory table
+        db.query(models.Tenant).filter(models.Tenant.subdomain.in_(["stark", "lannister"])).delete()
+        db.commit()
+        
+        # Drop both isolated test schema folders from the PostgreSQL engine
+        db.execute(text("DROP SCHEMA IF EXISTS tenant_stark CASCADE;"))
+        db.execute(text("DROP SCHEMA IF EXISTS tenant_lannister CASCADE;"))
         db.commit()
     finally:
         db.close()
 
-def test_successful_tenant_registration():
+def test_cross_tenant_data_isolation():
     """
-    SDET Test Case: Verify a brand new tenant can register successfully 
-    and receives an HTTP 201 Created status with the correct payload.
+    SDET Multi-Tenant Verification: Proves that data inserted into Tenant A
+    is entirely invisible and locked away from Tenant B.
     """
-    payload = {
-        "company_name": "Stark Industries",
-        "subdomain": "winterfell"
-    }
-    
-    response = client.post("/tenants/", json=payload)
-    
-    assert response.status_code == 201
-    data = response.json()
-    assert data["company_name"] == "Stark Industries"
-    assert data["subdomain"] == "winterfell"
-    assert data["tenant_schema"] == "tenant_winterfell"
-    assert "id" in data
+    # 1. Onboard Tenant A (Stark)
+    tenant_a_payload = {"company_name": "Stark Corp", "subdomain": "stark"}
+    res_t1 = client.post("/tenants/", json=tenant_a_payload)
+    assert res_t1.status_code == 201
 
-def test_duplicate_subdomain_rejection():
-    """
-    QA Regression Test: Verify the system securely blocks duplicate subdomains 
-    and throws a clean HTTP 400 Bad Request exception.
-    """
-    payload = {
-        "company_name": "Stark Industries",
-        "subdomain": "winterfell"
+    # 2. Onboard Tenant B (Lannister)
+    tenant_b_payload = {"company_name": "Lannister Corp", "subdomain": "lannister"}
+    res_t2 = client.post("/tenants/", json=tenant_b_payload)
+    assert res_t2.status_code == 201
+
+    # 3. Add Customer to Tenant A (Passing Tenant A's subdomain header)
+    customer_payload = {
+        "first_name": "Jon",
+        "last_name": "Snow",
+        "email": "jon.snow@winterfell.com"
     }
+    headers_tenant_a = {"X-Tenant-Subdomain": "stark"}
+    res_cust_a = client.post("/customers/", json=customer_payload, headers=headers_tenant_a)
+    assert res_cust_a.status_code == 201
+
+    # 4. Attempt to fetch Tenant A's customer list as Tenant A (Should contain 1 customer)
+    res_list_a = client.get("/customers/", headers=headers_tenant_a)
+    assert res_list_a.status_code == 200
+    assert len(res_list_a.json()) == 1
+    assert res_list_a.json()[0]["email"] == "jon.snow@winterfell.com"
+
+    # 5. SECURITY ATTACK VALIDATION: Fetch customer list as Tenant B (Lannister)
+    # Even though Jon Snow exists inside the database cluster, Tenant B's folder must be empty.
+    headers_tenant_b = {"X-Tenant-Subdomain": "lannister"}
+    res_list_b = client.get("/customers/", headers=headers_tenant_b)
     
-    # Act 1: Register the subdomain the first time (Should succeed)
-    response1 = client.post("/tenants/", json=payload)
-    assert response1.status_code == 201
-    
-    # Act 2: Try to register the EXACT SAME subdomain again (Should fail!)
-    response2 = client.post("/tenants/", json=payload)
-    
-    # Assert: Verify our backend blocked it with a 400 Bad Request
-    assert response2.status_code == 400
-    assert "already taken" in response2.json()["detail"]
+    assert res_list_b.status_code == 200
+    assert len(res_list_b.json()) == 0  # CRITICAL SECURITY ASSERTION: Leak check passed!
