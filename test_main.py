@@ -1,46 +1,44 @@
+import os
 import pytest
 from fastapi.testclient import TestClient
 from main import app
-from database import SessionLocal
+from database import SessionLocal, engine
 from sqlalchemy import text
 import models
 
 client = TestClient(app)
 
-@pytest.fixture(autouse=True)
-def cleanup_database():
+@pytest.fixture(scope="session", autouse=True)
+def initialize_test_database_schemas():
     """
-    SDET Test Fixture: Automated lifecycle manager.
-    Wipes master registries and destroys generated test schema folders from Docker.
+    SDET Global Engine Initializer:
+    Runs once per test session. Dynamically reads local SQL schema files 
+    and builds the base table hierarchies directly inside the container.
     """
-    yield  # Let the test run first
-    
     db = SessionLocal()
     try:
-        # 1. Wipe master registration records from the public directory table
-        db.query(models.Tenant).filter(
-            models.Tenant.subdomain.in_([
-                "stark", "lannister", "watchnegative", "glovernegative", "tyrell", "martell"
-            ])
-        ).delete()
-        db.commit()
-        
-        # 2. Break pooling retention state connections to avoid table drop locks
-        db.invalidate()
-        
-        # 3. Drop isolated test schema folders from the PostgreSQL engine
-        db.execute(text("DROP SCHEMA IF EXISTS tenant_stark CASCADE;"))
-        db.execute(text("DROP SCHEMA IF EXISTS tenant_lannister CASCADE;"))
-        db.execute(text("DROP SCHEMA IF EXISTS tenant_watchnegative CASCADE;"))
-        db.execute(text("DROP SCHEMA IF EXISTS tenant_glovernegative CASCADE;"))
-        db.execute(text("DROP SCHEMA IF EXISTS tenant_tyrell CASCADE;"))
-        db.execute(text("DROP SCHEMA IF EXISTS tenant_martell CASCADE;"))
-        db.commit()
+        # 1. Path routing to your database initialization scripts
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        public_sql_path = os.path.join(base_dir, "database", "01_public_schema.sql")
+        tenant_sql_path = os.path.join(base_dir, "database", "02_tenant_schema.sql")
+
+        # 2. Execute public registry scripts if they exist locally
+        if os.path.exists(public_sql_path):
+            with open(public_sql_path, "r") as f:
+                db.execute(text(f.read()))
+                db.commit()
+
+        # 3. Execute template container scripts
+        if os.path.exists(tenant_sql_path):
+            with open(tenant_sql_path, "r") as f:
+                db.execute(text(f.read()))
+                db.commit()
+                
     except Exception as e:
-        db.rollback()
-        raise e
+        print(f"[SDET ENGINE ERROR] Critical bootloader schema synchronization failed: {e}")
     finally:
         db.close()
+
 
 def test_cross_tenant_data_isolation():
     """
