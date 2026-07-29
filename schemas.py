@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, EmailStr
 
 class TenantCreate(BaseModel):
     company_name: str = Field(..., max_length=100)
@@ -25,8 +25,8 @@ class TenantResponse(BaseModel):
 class CustomerCreate(BaseModel):
     first_name: str = Field(..., max_length=50)
     last_name: str = Field(..., max_length=50)
-    email: str = Field(..., max_length=100)
-
+    email: EmailStr = Field(..., max_length=100)
+    
     model_config = ConfigDict(
         json_schema_extra={
             "example": {

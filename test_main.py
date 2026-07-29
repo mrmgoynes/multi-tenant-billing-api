@@ -65,3 +65,34 @@ def test_cross_tenant_data_isolation():
     
     assert res_list_b.status_code == 200
     assert len(res_list_b.json()) == 0  # CRITICAL SECURITY ASSERTION: Leak check passed!
+
+def test_customer_creation_rejects_malformed_email():
+    """
+    SDET Negative Test Case:
+    Verifies that the validation schema intercepts and blocks a malformed email payload, 
+    returning an authentic 422 Unprocessable Entity gateway rejection.
+    """
+    # 1. Onboard a fresh tenant to establish a valid testing target schema
+    tenant_payload = {"company_name": "Night's Watch LLC", "subdomain": "watch"}
+    res_tenant = client.post("/tenants/", json=tenant_payload)
+    assert res_tenant.status_code == 201
+    
+    # 2. Construct a toxic payload containing a corrupted email structure
+    malformed_payload = {
+        "first_name": "Samwell",
+        "last_name": "Tarly",
+        "email": "sam.tarly@citadel" # Missing valid top-level domain extension (.com, .org, etc)
+    }
+    
+    # 3. Dispatched request with the tenant routing header
+    headers = {"X-Tenant-Subdomain": "watch"}
+    response = client.post("/customers/", json=malformed_payload, headers=headers)
+    
+    # 4. CRITICAL QUALITY GATE ASSERTIONS
+    # Pydantic automatic request validation should halt execution before it ever hits the route logic or database
+    assert response.status_code == 422
+    
+    # 5. Schema Inspection: Assert that the error detail explicitly points out the email field failure
+    error_details = response.json()["detail"]
+    assert error_details[0]["loc"] == ["body", "email"]
+    assert "value is not a valid email address" in error_details[0]["msg"]
