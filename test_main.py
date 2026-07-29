@@ -149,3 +149,47 @@ def test_customer_creation_rejects_missing_isolation_header():
     assert response.status_code == 400
     assert "Missing required isolation control header" in response.json()["detail"]
 
+
+def test_customer_creation_rejects_nonexistent_tenant_header():
+    """
+    SDET Negative Test Case 5: Security Gate Unauthorized Tenant.
+    Verifies that if an invalid or un-onboarded subdomain header is passed, 
+    the middleware halts execution immediately with a 403 Forbidden status.
+    """
+    customer_payload = {
+        "first_name": "Tyrion",
+        "last_name": "Lannister",
+        "email": "halfman@casterly.com"
+    }
+    
+    headers = {"X-Tenant-Subdomain": "white_walkers"} # Valid structure, non-existent record
+    response = client.post("/customers/", json=customer_payload, headers=headers)
+    
+    assert response.status_code == 403
+    assert "Access Denied: Invalid, inactive, or suspended tenant target" in response.json()["detail"]
+
+
+def test_cross_tenant_duplicate_email_isolation():
+    """
+    SDET Negative Test Case 6: Cross-Tenant Data Contamination.
+    Proves that creating a customer with an email address in Tenant A does 
+    not restrict or block a completely separate Tenant B from registering 
+    the same email address within their independent workspace.
+    """
+    # 1. Onboard Tenant A and Tenant B
+    client.post("/tenants/", json={"company_name": "Tyrell Orchards", "subdomain": "tyrell"})
+    client.post("/tenants/", json={"company_name": "Martell Sun", "subdomain": "martell"})
+    
+    shared_payload = {
+        "first_name": "Olenna",
+        "last_name": "Redwyne",
+        "email": "queen.of.thorns@highgarden.com"
+    }
+    
+    # 2. Add customer to Tenant A -> Should succeed
+    res_a = client.post("/customers/", json=shared_payload, headers={"X-Tenant-Subdomain": "tyrell"})
+    assert res_a.status_code == 201
+    
+    # 3. Try to add the identical customer email payload to Tenant B -> Must succeed independently!
+    res_b = client.post("/customers/", json=shared_payload, headers={"X-Tenant-Subdomain": "martell"})
+    assert res_b.status_code == 201 
