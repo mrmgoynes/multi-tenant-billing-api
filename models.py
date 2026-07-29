@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, CheckConstraint
+from sqlalchemy import Column, Integer, String, Numeric, DateTime, ForeignKey, CheckConstraint
 from sqlalchemy.sql import func
 from database import Base
 
@@ -35,4 +35,17 @@ class Customer(Base):
     first_name = Column(String(50), nullable=False)
     last_name = Column(String(50), nullable=False)
     email = Column(String(100), unique=True, nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class Plan(Base):
+    """
+    Tenant Structural Model:
+    Defines the isolated tier structures available for client subscription mappings.
+    """
+    __tablename__ = "plans"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(50), nullable=False)        # e.g., "Basic Plan", "Enterprise"
+    price = Column(Numeric(10, 2), nullable=False)   # e.g., 29.99, 199.00
+    billing_cycle = Column(String(20), default="monthly") # monthly, yearly
     created_at = Column(DateTime(timezone=True), server_default=func.now())
