@@ -1,10 +1,11 @@
 from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from decimal import Decimal
+from datetime import datetime  # Grouped cleanly at the top
+from typing import Optional
 
 class TenantCreate(BaseModel):
     company_name: str = Field(..., max_length=100)
     subdomain: str = Field(..., max_length=50)
-
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
@@ -20,14 +21,12 @@ class TenantResponse(BaseModel):
     subdomain: str
     tenant_schema: str
     status: str
-
     model_config = ConfigDict(from_attributes=True)
 
 class CustomerCreate(BaseModel):
     first_name: str = Field(..., max_length=50)
     last_name: str = Field(..., max_length=50)
     email: EmailStr = Field(..., max_length=100)
-    
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
@@ -43,14 +42,12 @@ class CustomerResponse(BaseModel):
     first_name: str
     last_name: str
     email: str
-
     model_config = ConfigDict(from_attributes=True)
 
 class PlanCreate(BaseModel):
     name: str = Field(..., max_length=50)
-    price: Decimal = Field(..., ge=0) # Must be a valid decimal greater than or equal to 0
+    price: Decimal = Field(..., ge=0)
     billing_cycle: str = Field("monthly", max_length=20)
-
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
@@ -66,5 +63,25 @@ class PlanResponse(BaseModel):
     name: str
     price: Decimal
     billing_cycle: str
-    
+    model_config = ConfigDict(from_attributes=True)
+
+class SubscriptionCreate(BaseModel):
+    customer_id: int
+    plan_id: int
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "customer_id": 1,
+                "plan_id": 2
+            }
+        }
+    )
+
+class SubscriptionResponse(BaseModel):
+    id: int
+    customer_id: int
+    plan_id: int
+    status: str
+    start_date: datetime
+    end_date: Optional[datetime] = None
     model_config = ConfigDict(from_attributes=True)

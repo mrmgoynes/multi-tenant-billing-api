@@ -49,3 +49,19 @@ class Plan(Base):
     price = Column(Numeric(10, 2), nullable=False)   # e.g., 29.99, 199.00
     billing_cycle = Column(String(20), default="monthly") # monthly, yearly
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class Subscription(Base):
+    """
+    Tenant Core Business Model:
+    Binds an isolated Customer to a specific subscription Plan tier, 
+    managing the lifecycles and validation parameters of active contracts.
+    """
+    __tablename__ = "subscriptions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    customer_id = Column(Integer, ForeignKey("customers.id", ondelete="CASCADE"), nullable=False)
+    plan_id = Column(Integer, ForeignKey("plans.id", ondelete="RESTRICT"), nullable=False)
+    status = Column(String(20), default="active") # active, trialing, past_due, canceled
+    start_date = Column(DateTime(timezone=True), server_default=func.now())
+    end_date = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
