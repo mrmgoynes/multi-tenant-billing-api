@@ -65,3 +65,19 @@ class Subscription(Base):
     start_date = Column(DateTime(timezone=True), server_default=func.now())
     end_date = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class Invoice(Base):
+    """
+    Tenant Financial Business Model:
+    Tracks billable accounts receivable events generated dynamically 
+    per customer billing cycle or plan upgradation event.
+    """
+    __tablename__ = "invoices"
+
+    id = Column(Integer, primary_key=True, index=True)
+    customer_id = Column(Integer, ForeignKey("customers.id", ondelete="CASCADE"), nullable=False)
+    invoice_number = Column(String(30), unique=True, nullable=False) # Sequential corporate tracker
+    amount = Column(Numeric(10, 2), nullable=False)
+    status = Column(String(20), default="unpaid") # unpaid, paid, void, past_due
+    due_date = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

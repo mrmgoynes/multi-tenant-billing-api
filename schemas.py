@@ -85,3 +85,31 @@ class SubscriptionResponse(BaseModel):
     start_date: datetime
     end_date: Optional[datetime] = None
     model_config = ConfigDict(from_attributes=True)
+
+# ... Keep all previous Tenant, Customer, Plan, and Subscription schemas exactly as they are ...
+
+class InvoiceCreate(BaseModel):
+    customer_id: int
+    amount: Decimal = Field(..., ge=0)
+    due_date: datetime
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "customer_id": 1,
+                "amount": "49.99",
+                "due_date": "2026-08-30T00:00:00Z"
+            }
+        }
+    )
+
+class InvoiceResponse(BaseModel):
+    id: int
+    customer_id: int
+    invoice_number: str
+    amount: Decimal
+    status: str
+    due_date: datetime
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
