@@ -33,17 +33,52 @@ def initialize_test_database_schemas():
             with open(tenant_sql_path, "r") as f:
                 db.execute(text(f.read()))
                 db.commit()
-                
     except Exception as e:
         print(f"[SDET ENGINE ERROR] Critical bootloader schema synchronization failed: {e}")
     finally:
         db.close()
 
 
+@pytest.fixture(autouse=True)
+def cleanup_database():
+    """
+    SDET Test Fixture: Automated lifecycle manager.
+    Wipes master registries and destroys generated test schema folders from Docker.
+    """
+    yield  # Let the test run first
+    
+    db = SessionLocal()
+    try:
+        # 1. Wipe master registration records from the public directory table
+        db.query(models.Tenant).filter(
+            models.Tenant.subdomain.in_([
+                "stark", "lannister", "watchnegative", "glovernegative", "tyrell", "martell", "starkiron"
+            ])
+        ).delete()
+        db.commit()
+        
+        # 2. Break pooling retention state connections to avoid table drop locks
+        db.invalidate()
+        
+        # 3. Drop isolated test schema folders from the PostgreSQL engine
+        db.execute(text("DROP SCHEMA IF EXISTS tenant_stark CASCADE;"))
+        db.execute(text("DROP SCHEMA IF EXISTS tenant_lannister CASCADE;"))
+        db.execute(text("DROP SCHEMA IF EXISTS tenant_watchnegative CASCADE;"))
+        db.execute(text("DROP SCHEMA IF EXISTS tenant_glovernegative CASCADE;"))
+        db.execute(text("DROP SCHEMA IF EXISTS tenant_tyrell CASCADE;"))
+        db.execute(text("DROP SCHEMA IF EXISTS tenant_martell CASCADE;"))
+        db.execute(text("DROP SCHEMA IF EXISTS tenant_starkiron CASCADE;"))
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise e
+    finally:
+        db.close()
+
+
 def test_cross_tenant_data_isolation():
     """
-    SDET Multi-Tenant Verification: Proves that data inserted into Tenant A
-    is entirely invisible and locked away from Tenant B.
+    SDET Multi-Tenant Verification: Proves that data inserted into Tenant A is entirely invisible and locked away from Tenant B.
     """
     # 1. Onboard Tenant A (Stark)
     tenant_a_payload = {"company_name": "Stark Corp", "subdomain": "stark"}
@@ -72,34 +107,29 @@ def test_cross_tenant_data_isolation():
     assert res_list_a.json()[0]["email"] == "jon.snow@winterfell.com"
 
     # 5. SECURITY ATTACK VALIDATION: Fetch customer list as Tenant B (Lannister)
-    # Even though Jon Snow exists inside the database cluster, Tenant B's folder must be empty.
     headers_tenant_b = {"X-Tenant-Subdomain": "lannister"}
     res_list_b = client.get("/customers/", headers=headers_tenant_b)
-    
     assert res_list_b.status_code == 200
-    assert len(res_list_b.json()) == 0  # CRITICAL SECURITY ASSERTION: Leak check passed!
+    assert len(res_list_b.json()) == 0
+
 
 def test_customer_creation_rejects_malformed_email():
     """
-    SDET Negative Test Case:
-    Verifies that the validation schema intercepts and blocks a malformed email payload.
+    SDET Negative Test Case: Verifies that the validation schema intercepts and blocks a malformed email payload.
     """
-    # Changed subdomain from 'watch' to 'watchnegative' to guarantee uniqueness
     tenant_payload = {"company_name": "Night's Watch LLC", "subdomain": "watchnegative"}
     res_tenant = client.post("/tenants/", json=tenant_payload)
     assert res_tenant.status_code == 201
-    
+
     malformed_payload = {
         "first_name": "Samwell",
         "last_name": "Tarly",
-        "email": "sam.tarly@citadel" 
+        "email": "sam.tarly@citadel"
     }
-    
     headers = {"X-Tenant-Subdomain": "watchnegative"}
     response = client.post("/customers/", json=malformed_payload, headers=headers)
-    
     assert response.status_code == 422
-    # Fix the Pydantic array path parsing error here as well:
+    
     error_details = response.json()["detail"][0]
     assert error_details["loc"] == ["body", "email"]
 
@@ -109,41 +139,32 @@ def test_customer_creation_rejects_excessive_name_length():
     SDET Negative Test Case 3: Boundary Violation.
     Verifies that first_name values exceeding max_length=50 are caught by Pydantic.
     """
-    # Updated subdomain to ensure a completely fresh runtime context
     tenant_payload = {"company_name": "Glover Logistics", "subdomain": "glovernegative"}
     res_tenant = client.post("/tenants/", json=tenant_payload)
-    assert res_tenant.status_code == 201 
+    assert res_tenant.status_code == 201
 
     toxic_payload = {
-        "first_name": "A" * 51, 
+        "first_name": "A" * 51,
         "last_name": "Mormont",
         "email": "johannah.m@mormont.com"
     }
-    
     headers = {"X-Tenant-Subdomain": "glovernegative"}
     response = client.post("/customers/", json=toxic_payload, headers=headers)
-    
     assert response.status_code == 422
     assert response.json()["detail"][0]["loc"] == ["body", "first_name"]
-
-
 
 
 def test_customer_creation_rejects_missing_isolation_header():
     """
     SDET Negative Test Case 4: Security Gate Missing Header.
-    Verifies that requests to tenant-specific resources without an 
-    X-Tenant-Subdomain header are blocked by the middleware with a 400 Bad Request.
+    Verifies that requests to tenant-specific resources without an X-Tenant-Subdomain header are blocked by the middleware with a 400 Bad Request.
     """
     customer_payload = {
         "first_name": "Arya",
         "last_name": "Stark",
         "email": "noone@braavos.com"
     }
-    
-    # Fire the request completely omitting the headers parameter
     response = client.post("/customers/", json=customer_payload)
-    
     assert response.status_code == 400
     assert "Missing required isolation control header" in response.json()["detail"]
 
@@ -151,18 +172,15 @@ def test_customer_creation_rejects_missing_isolation_header():
 def test_customer_creation_rejects_nonexistent_tenant_header():
     """
     SDET Negative Test Case 5: Security Gate Unauthorized Tenant.
-    Verifies that if an invalid or un-onboarded subdomain header is passed, 
-    the middleware halts execution immediately with a 403 Forbidden status.
+    Verifies that if an invalid or un-onboarded subdomain header is passed, the middleware halts execution immediately with a 403 Forbidden status.
     """
     customer_payload = {
         "first_name": "Tyrion",
         "last_name": "Lannister",
         "email": "halfman@casterly.com"
     }
-    
-    headers = {"X-Tenant-Subdomain": "white_walkers"} # Valid structure, non-existent record
+    headers = {"X-Tenant-Subdomain": "white_walkers"}
     response = client.post("/customers/", json=customer_payload, headers=headers)
-    
     assert response.status_code == 403
     assert "Access Denied: Invalid, inactive, or suspended tenant target" in response.json()["detail"]
 
@@ -170,11 +188,8 @@ def test_customer_creation_rejects_nonexistent_tenant_header():
 def test_cross_tenant_duplicate_email_isolation():
     """
     SDET Negative Test Case 6: Cross-Tenant Data Contamination.
-    Proves that creating a customer with an email address in Tenant A does 
-    not restrict or block a completely separate Tenant B from registering 
-    the same email address within their independent workspace.
+    Proves that creating a customer with an email address in Tenant A does not restrict or block a completely separate Tenant B from registering the same email address within their independent workspace.
     """
-    # 1. Onboard Tenant A and Tenant B
     client.post("/tenants/", json={"company_name": "Tyrell Orchards", "subdomain": "tyrell"})
     client.post("/tenants/", json={"company_name": "Martell Sun", "subdomain": "martell"})
     
@@ -184,10 +199,46 @@ def test_cross_tenant_duplicate_email_isolation():
         "email": "queen.of.thorns@highgarden.com"
     }
     
-    # 2. Add customer to Tenant A -> Should succeed
     res_a = client.post("/customers/", json=shared_payload, headers={"X-Tenant-Subdomain": "tyrell"})
     assert res_a.status_code == 201
     
-    # 3. Try to add the identical customer email payload to Tenant B -> Must succeed independently!
     res_b = client.post("/customers/", json=shared_payload, headers={"X-Tenant-Subdomain": "martell"})
-    assert res_b.status_code == 201 
+    assert res_b.status_code == 201
+
+
+def test_invoice_sequential_sequencing_isolation():
+    """
+    SDET Integration Test Case 7: Invoice Sequential Number Generation.
+    Verifies that when multiple invoices are generated within a tenant workspace, the engine dynamically queries historical count states to auto-increment the sequence number tracker cleanly (e.g., INV-STARK-0001 -> INV-STARK-0002).
+    """
+    tenant_payload = {"company_name": "Stark Ironworks LLC", "subdomain": "starkiron"}
+    res_tenant = client.post("/tenants/", json=tenant_payload)
+    assert res_tenant.status_code == 201
+
+    customer_payload = {
+        "first_name": "Tony",
+        "last_name": "Stark",
+        "email": "tony@starkindustries.com"
+    }
+    headers = {"X-Tenant-Subdomain": "starkiron"}
+    res_cust = client.post("/customers/", json=customer_payload, headers=headers)
+    assert res_cust.status_code == 201
+    created_customer_id = res_cust.json()["id"]
+
+    invoice_payload_1 = {
+        "customer_id": created_customer_id,
+        "amount": "1500.00",
+        "due_date": "2026-09-15T00:00:00Z"
+    }
+    res_inv_1 = client.post("/invoices/", json=invoice_payload_1, headers=headers)
+    assert res_inv_1.status_code == 201
+    assert res_inv_1.json()["invoice_number"] == "INV-STARKIRON-0001"
+
+    invoice_payload_2 = {
+        "customer_id": created_customer_id,
+        "amount": "250.50",
+        "due_date": "2026-09-30T00:00:00Z"
+    }
+    res_inv_2 = client.post("/invoices/", json=invoice_payload_2, headers=headers)
+    assert res_inv_2.status_code == 201
+    assert res_inv_2.json()["invoice_number"] == "INV-STARKIRON-0002"

@@ -29,15 +29,17 @@ CREATE TABLE IF NOT EXISTS tenant_template.subscriptions (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- Core Invoice Generation Table Layout
+-- Open database/02_tenant_schema.sql and update the invoices block to look exactly like this:
 CREATE TABLE IF NOT EXISTS tenant_template.invoices (
     id SERIAL PRIMARY KEY,
     customer_id INTEGER NOT NULL,
+    invoice_number VARCHAR(30) NOT NULL UNIQUE,  -- ADD THIS CRITICAL SEQUENCER COLUMN
     amount NUMERIC(10, 2) NOT NULL,
     status VARCHAR(20) DEFAULT 'unpaid',
     due_date TIMESTAMP WITH TIME ZONE NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
 
 -- PHASE 18 ARCHITECTURE: Foundational Subscription Product Tier Layout
 CREATE TABLE IF NOT EXISTS tenant_template.plans (
