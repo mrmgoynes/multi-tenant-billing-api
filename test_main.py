@@ -3,7 +3,7 @@ import pytest
 from fastapi.testclient import TestClient
 from main import app
 from database import SessionLocal, engine
-from sqlalchemy import text
+from sqlalchemy import text, func # FIXED: Added func import here
 import models
 
 client = TestClient(app)
@@ -17,18 +17,15 @@ def initialize_test_database_schemas():
     """
     db = SessionLocal()
     try:
-        # 1. Path routing to your database initialization scripts
         base_dir = os.path.dirname(os.path.abspath(__file__))
         public_sql_path = os.path.join(base_dir, "database", "01_public_schema.sql")
         tenant_sql_path = os.path.join(base_dir, "database", "02_tenant_schema.sql")
 
-        # 2. Execute public registry scripts if they exist locally
         if os.path.exists(public_sql_path):
             with open(public_sql_path, "r") as f:
                 db.execute(text(f.read()))
                 db.commit()
 
-        # 3. Execute template container scripts
         if os.path.exists(tenant_sql_path):
             with open(tenant_sql_path, "r") as f:
                 db.execute(text(f.read()))
@@ -52,7 +49,8 @@ def cleanup_database():
         # 1. Wipe master registration records from the public directory table
         db.query(models.Tenant).filter(
             models.Tenant.subdomain.in_([
-                "stark", "lannister", "watchnegative", "glovernegative", "tyrell", "martell", "starkiron", "martelltrade", "arrynprorate"
+                "stark", "lannister", "watchnegative", "glovernegative", 
+                "tyrell", "martell", "starkiron", "martelltrade", "arrynprorate", "cronrenew"
             ])
         ).delete()
         db.commit()
@@ -60,22 +58,24 @@ def cleanup_database():
         # 2. Break pooling retention state connections to avoid table drop locks
         db.invalidate()
         
-        # 3. Drop isolated test schema folders from the PostgreSQL engine
-        db.execute(text("DROP SCHEMA IF EXISTS tenant_stark CASCADE;"))
-        db.execute(text("DROP SCHEMA IF EXISTS tenant_lannister CASCADE;"))
-        db.execute(text("DROP SCHEMA IF EXISTS tenant_watchnegative CASCADE;"))
-        db.execute(text("DROP SCHEMA IF EXISTS tenant_glovernegative CASCADE;"))
-        db.execute(text("DROP SCHEMA IF EXISTS tenant_tyrell CASCADE;"))
-        db.execute(text("DROP SCHEMA IF EXISTS tenant_martell CASCADE;"))
-        db.execute(text("DROP SCHEMA IF EXISTS tenant_starkiron CASCADE;"))
-        db.execute(text("DROP SCHEMA IF EXISTS tenant_martelltrade CASCADE;"))
-        db.execute(text("DROP SCHEMA IF EXISTS tenant_arrynprorate CASCADE;"))
+        # 3. FIXED: Wrapped schema identifiers in explicit double quotes to protect casing strings
+        db.execute(text('DROP SCHEMA IF EXISTS "tenant_stark" CASCADE;'))
+        db.execute(text('DROP SCHEMA IF EXISTS "tenant_lannister" CASCADE;'))
+        db.execute(text('DROP SCHEMA IF EXISTS "tenant_watchnegative" CASCADE;'))
+        db.execute(text('DROP SCHEMA IF EXISTS "tenant_glovernegative" CASCADE;'))
+        db.execute(text('DROP SCHEMA IF EXISTS "tenant_tyrell" CASCADE;'))
+        db.execute(text('DROP SCHEMA IF EXISTS "tenant_martell" CASCADE;'))
+        db.execute(text('DROP SCHEMA IF EXISTS "tenant_starkiron" CASCADE;'))
+        db.execute(text('DROP SCHEMA IF EXISTS "tenant_martelltrade" CASCADE;'))
+        db.execute(text('DROP SCHEMA IF EXISTS "tenant_arrynprorate" CASCADE;'))
+        db.execute(text('DROP SCHEMA IF EXISTS "tenant_cronrenew" CASCADE;'))
         db.commit()
     except Exception as e:
         db.rollback()
         raise e
     finally:
         db.close()
+
 
 
 def test_cross_tenant_data_isolation():
@@ -351,5 +351,72 @@ def test_subscription_mid_cycle_upgrade_proration():
         assert invoice_record is not None
         assert float(invoice_record.amount) == 30.00  # $49.99 - $19.99
         assert invoice_record.invoice_number == f"INV-{subdomain_handle.upper()}-0001"
+    finally:
+        db.close()
+
+def test_automated_recurring_billing_cron_loop():
+    """
+    SDET Integration Test Case 10: Cross-Schema Cron Billing Automation.
+    Verifies that the midnight cron script loops through active tenants,
+    aggregates unbilled telemetry data, updates subscription windows,
+    and generates unified composite billing invoices automatically.
+    """
+    # 1. Onboard a fresh tenant to isolate this background loop test
+    subdomain_handle = "cronrenew"
+    tenant_payload = {"company_name": "Cron Automated Corp", "subdomain": subdomain_handle}
+    res_tenant = client.post("/tenants/", json=tenant_payload)
+    assert res_tenant.status_code == 201
+    headers = {"X-Tenant-Subdomain": subdomain_handle}
+
+    # 2. Inject a fresh test customer row
+    customer_payload = {"first_name": "Bran", "last_name": "Stark", "email": "threeeyes@winterfell.com"}
+    res_cust = client.post("/customers/", json=customer_payload, headers=headers)
+    assert res_cust.status_code == 201
+    customer_id = res_cust.json()["id"]
+
+    # 3. Dynamic Plan Identification Lookups
+    res_plans = client.get("/plans/", headers=headers)
+    assert res_plans.status_code == 200
+    plans_list = res_plans.json()
+    basic_plan_id = next(p["id"] for p in plans_list if p["name"] == "Basic Tier") # $19.99
+
+    # 4. Create a Subscription using the dynamically discovered Basic Plan ID
+    sub_payload = {"customer_id": customer_id, "plan_id": basic_plan_id}
+    res_sub = client.post("/subscriptions/", json=sub_payload, headers=headers)
+    assert res_sub.status_code == 201
+
+    # 5. Ingest Metered Consumption Telemetry: Log 200 API Requests
+    usage_payload = {
+        "customer_id": customer_id,
+        "metric_name": "api_requests",
+        "quantity": 200
+    }
+    res_usage = client.post("/usage/", json=usage_payload, headers=headers)
+    assert res_usage.status_code == 201
+
+    # 6. TRIGGER THE BACKGROUND CRON WORKER ENGINE DIRECTLY
+    # Import the function module we just designed in Step 1
+    from cron_billing import execute_midnight_billing_run
+    execute_midnight_billing_run()
+
+    # 7. CRITICAL QUALITY GATE ASSERTIONS: Verify composite ledger row exists
+    # Expected Amount = Base Plan ($19.99) + Usage (200 units * $0.05 = $10.00) = Exactly $29.99!
+    db = SessionLocal()
+    try:
+        db.execute(text(f'SET search_path TO "tenant_{subdomain_handle}", public;'))
+        db.commit()
+        
+        # Verify invoice generation parameters match calculations perfectly
+        invoice_record = db.query(models.Invoice).filter(models.Invoice.customer_id == customer_id).first()
+        assert invoice_record is not None
+        assert float(invoice_record.amount) == 29.99
+        assert invoice_record.invoice_number == f"INV-{subdomain_handle.upper()}-RENEW-0001"
+
+        # Verify telemetry log entries were successfully cleared post-billing to prevent double charges
+        total_remaining_usage = db.query(func.sum(models.UsageRecord.quantity)).filter(
+            models.UsageRecord.customer_id == customer_id
+        ).scalar() or 0
+        assert total_remaining_usage == 0
+
     finally:
         db.close()
