@@ -137,3 +137,14 @@ class UsageResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+class SubscriptionUpgradeRequest(BaseModel):
+    new_plan_id: int
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "new_plan_id": 2 # Upgrading to the Pro Tier
+            }
+        }
+    )
+

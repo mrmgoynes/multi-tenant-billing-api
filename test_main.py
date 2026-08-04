@@ -52,7 +52,7 @@ def cleanup_database():
         # 1. Wipe master registration records from the public directory table
         db.query(models.Tenant).filter(
             models.Tenant.subdomain.in_([
-                "stark", "lannister", "watchnegative", "glovernegative", "tyrell", "martell", "starkiron", "martelltrade"
+                "stark", "lannister", "watchnegative", "glovernegative", "tyrell", "martell", "starkiron", "martelltrade", "arrynprorate"
             ])
         ).delete()
         db.commit()
@@ -69,6 +69,7 @@ def cleanup_database():
         db.execute(text("DROP SCHEMA IF EXISTS tenant_martell CASCADE;"))
         db.execute(text("DROP SCHEMA IF EXISTS tenant_starkiron CASCADE;"))
         db.execute(text("DROP SCHEMA IF EXISTS tenant_martelltrade CASCADE;"))
+        db.execute(text("DROP SCHEMA IF EXISTS tenant_arrynprorate CASCADE;"))
         db.commit()
     except Exception as e:
         db.rollback()
@@ -293,3 +294,62 @@ def test_usage_metering_and_aggregation_summary():
     
     # Assert that 100 + 150 was mathematically compiled to exactly 250 rows total
     assert res_summary.json()["total_consumed"] == 250
+
+def test_subscription_mid_cycle_upgrade_proration():
+    """
+    SDET Integration Test Case 9: Advanced Mid-Cycle Prorated Billing.
+    Verifies that a customer can transition pricing tiers mid-month,
+    automatically canceling the old plan and spinning up an adjustment invoice.
+    """
+    # 1. Onboard a fresh isolated workspace for this calculation test
+    # We will use an adjusted unique subdomain string name to avoid background pool caching
+    subdomain_handle = "arrynprorate"
+    tenant_payload = {"company_name": "Arryn Sky Corp", "subdomain": subdomain_handle}
+    res_tenant = client.post("/tenants/", json=tenant_payload)
+    assert res_tenant.status_code == 201
+    headers = {"X-Tenant-Subdomain": subdomain_handle}
+
+    # 2. Inject a fresh test customer row
+    customer_payload = {"first_name": "Jon", "last_name": "Arryn", "email": "defender@vale.com"}
+    res_cust = client.post("/customers/", json=customer_payload, headers=headers)
+    assert res_cust.status_code == 201
+    customer_id = res_cust.json()["id"]
+
+    # 3. Dynamic Plan Identification Lookups
+    res_plans = client.get("/plans/", headers=headers)
+    assert res_plans.status_code == 200
+    plans_list = res_plans.json()
+    
+    basic_plan_id = next(p["id"] for p in plans_list if p["name"] == "Basic Tier")
+    pro_plan_id = next(p["id"] for p in plans_list if p["name"] == "Pro Tier")
+
+    # 4. Create a Subscription using the dynamically discovered Basic Plan ID
+    sub_payload = {"customer_id": customer_id, "plan_id": basic_plan_id}
+    res_sub = client.post("/subscriptions/", json=sub_payload, headers=headers)
+    assert res_sub.status_code == 201
+    subscription_id = res_sub.json()["id"]
+
+    # 5. Trigger Mid-Cycle Upgrade Request to the dynamically discovered Pro Plan ID
+    upgrade_payload = {"new_plan_id": pro_plan_id}
+    res_upgrade = client.put(f"/subscriptions/{subscription_id}/upgrade", json=upgrade_payload, headers=headers)
+    
+    # If the middleware prints an issue, let's print the error message payload to trace it
+    if res_upgrade.status_code == 422:
+        print("[SDET ERROR TRACKER] Rejection Detail:", res_upgrade.json())
+        
+    assert res_upgrade.status_code == 200
+    assert res_upgrade.json()["status"] == "active"
+    assert res_upgrade.json()["plan_id"] == pro_plan_id
+
+    # 6. CRITICAL QUALITY GATE ASSERTIONS: Verify the Prorated fields exist
+    db = SessionLocal()
+    try:
+        db.execute(text(f'SET search_path TO "tenant_{subdomain_handle}", public;'))
+        db.commit()
+        
+        invoice_record = db.query(models.Invoice).filter(models.Invoice.customer_id == customer_id).first()
+        assert invoice_record is not None
+        assert float(invoice_record.amount) == 30.00  # $49.99 - $19.99
+        assert invoice_record.invoice_number == f"INV-{subdomain_handle.upper()}-0001"
+    finally:
+        db.close()
