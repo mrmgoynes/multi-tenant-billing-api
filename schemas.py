@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from decimal import Decimal
-from datetime import datetime  # Grouped cleanly at the top
+from datetime import datetime
 from typing import Optional
 
 class TenantCreate(BaseModel):
@@ -86,13 +86,10 @@ class SubscriptionResponse(BaseModel):
     end_date: Optional[datetime] = None
     model_config = ConfigDict(from_attributes=True)
 
-# ... Keep all previous Tenant, Customer, Plan, and Subscription schemas exactly as they are ...
-
 class InvoiceCreate(BaseModel):
     customer_id: int
     amount: Decimal = Field(..., ge=0)
     due_date: datetime
-
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
@@ -111,5 +108,32 @@ class InvoiceResponse(BaseModel):
     status: str
     due_date: datetime
     created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+# ==============================================================================
+# PHASE 21 ARCHITECTURE: CONSUMPTION LEDGER SCHEMAS
+# ==============================================================================
+class UsageRecordCreate(BaseModel):
+    customer_id: int
+    metric_name: str = Field(..., max_length=50)
+    quantity: int = Field(..., gt=0)
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "customer_id": 1,
+                "metric_name": "api_requests",
+                "quantity": 250
+            }
+        }
+    )
+
+class UsageResponse(BaseModel):
+    id: int
+    customer_id: int
+    metric_name: str
+    quantity: int
+    recorded_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+

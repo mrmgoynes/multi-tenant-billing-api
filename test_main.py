@@ -52,7 +52,7 @@ def cleanup_database():
         # 1. Wipe master registration records from the public directory table
         db.query(models.Tenant).filter(
             models.Tenant.subdomain.in_([
-                "stark", "lannister", "watchnegative", "glovernegative", "tyrell", "martell", "starkiron"
+                "stark", "lannister", "watchnegative", "glovernegative", "tyrell", "martell", "starkiron", "martelltrade"
             ])
         ).delete()
         db.commit()
@@ -68,6 +68,7 @@ def cleanup_database():
         db.execute(text("DROP SCHEMA IF EXISTS tenant_tyrell CASCADE;"))
         db.execute(text("DROP SCHEMA IF EXISTS tenant_martell CASCADE;"))
         db.execute(text("DROP SCHEMA IF EXISTS tenant_starkiron CASCADE;"))
+        db.execute(text("DROP SCHEMA IF EXISTS tenant_martelltrade CASCADE;"))
         db.commit()
     except Exception as e:
         db.rollback()
@@ -242,3 +243,53 @@ def test_invoice_sequential_sequencing_isolation():
     res_inv_2 = client.post("/invoices/", json=invoice_payload_2, headers=headers)
     assert res_inv_2.status_code == 201
     assert res_inv_2.json()["invoice_number"] == "INV-STARKIRON-0002"
+
+def test_usage_metering_and_aggregation_summary():
+    """
+    SDET Integration Test Case 8: Usage Logging & Metrics Aggregation.
+    Verifies that a tenant can log multiple high-frequency consumption events, 
+    and the analytics engine successfully calculates the aggregated sum total.
+    """
+    # 1. Onboard a fresh isolated tenant space for this usage analytics test
+    tenant_payload = {"company_name": "Martell Trading LLC", "subdomain": "martelltrade"}
+    res_tenant = client.post("/tenants/", json=tenant_payload)
+    assert res_tenant.status_code == 201
+
+    # 2. Inject a verified test customer row into the newly spawned schema
+    customer_payload = {
+        "first_name": "Oberyn",
+        "last_name": "Martell",
+        "email": "viper@dorne.com"
+    }
+    headers = {"X-Tenant-Subdomain": "martelltrade"}
+    res_cust = client.post("/customers/", json=customer_payload, headers=headers)
+    assert res_cust.status_code == 201
+    created_customer_id = res_cust.json()["id"]
+
+    # 3. Log Ingestion Event #1: 100 API Requests
+    usage_payload_1 = {
+        "customer_id": created_customer_id,
+        "metric_name": "api_requests",
+        "quantity": 100
+    }
+    res_log_1 = client.post("/usage/", json=usage_payload_1, headers=headers)
+    assert res_log_1.status_code == 201
+
+    # 4. Log Ingestion Event #2: 150 API Requests for the same customer
+    usage_payload_2 = {
+        "customer_id": created_customer_id,
+        "metric_name": "api_requests",
+        "quantity": 150
+    }
+    res_log_2 = client.post("/usage/", json=usage_payload_2, headers=headers)
+    assert res_log_2.status_code == 201
+
+    # 5. CRITICAL QUALITY GATE: Request the aggregated reporting summary
+    res_summary = client.get(
+        f"/usage/summary/{created_customer_id}/api_requests", 
+        headers=headers
+    )
+    assert res_summary.status_code == 200
+    
+    # Assert that 100 + 150 was mathematically compiled to exactly 250 rows total
+    assert res_summary.json()["total_consumed"] == 250

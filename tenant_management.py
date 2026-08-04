@@ -19,9 +19,10 @@ def create_tenant_infrastructure(db: Session, schema_name: str) -> None:
         db.execute(text(f'CREATE TABLE IF NOT EXISTS "{schema_name}".customers (LIKE tenant_template.customers INCLUDING ALL);'))
         db.execute(text(f'CREATE TABLE IF NOT EXISTS "{schema_name}".subscriptions (LIKE tenant_template.subscriptions INCLUDING ALL);'))
         db.execute(text(f'CREATE TABLE IF NOT EXISTS "{schema_name}".invoices (LIKE tenant_template.invoices INCLUDING ALL);'))
-        
-        # NEW: Clone the structural plans table definition
         db.execute(text(f'CREATE TABLE IF NOT EXISTS "{schema_name}".plans (LIKE tenant_template.plans INCLUDING ALL);'))
+        
+        # NEW PHASE 21 INTEGRATION: Clone the structural telemetry ledger table definition
+        db.execute(text(f'CREATE TABLE IF NOT EXISTS "{schema_name}".usage_records (LIKE tenant_template.usage_records INCLUDING ALL);'))
         db.commit()
 
         # 3. SDET SYSTEM SEEDER: Populate base product tiers into the isolated workspace

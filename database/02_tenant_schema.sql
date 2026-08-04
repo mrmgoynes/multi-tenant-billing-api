@@ -49,3 +49,16 @@ CREATE TABLE IF NOT EXISTS tenant_template.plans (
     billing_cycle VARCHAR(20) DEFAULT 'monthly',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+-- PHASE 21 ARCHITECTURE: High-Frequency Event Telemetry Ledger
+CREATE TABLE IF NOT EXISTS tenant_template.usage_records (
+    id SERIAL PRIMARY KEY,
+    customer_id INTEGER NOT NULL REFERENCES tenant_template.customers(id) ON DELETE CASCADE,
+    metric_name VARCHAR(50) NOT NULL, -- e.g., 'api_requests', 'data_storage_gb'
+    quantity INTEGER NOT NULL,
+    recorded_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Crucial for optimizing performance when summarizing invoice calculations
+CREATE INDEX IF NOT EXISTS idx_usage_customer_metric ON tenant_template.usage_records(customer_id, metric_name);
+
